@@ -4,16 +4,14 @@ namespace VSolver
 {
     public class ImportConstructor : Attribute
     {
-
     }
+
     public class Import : Attribute
     {
-
     }
 
     public class Export : Attribute
     {
-        public Type BaseType { get; set; }
         public Export()
         {
         }
@@ -22,7 +20,7 @@ namespace VSolver
         {
             BaseType = type;
         }
+
+        public Type BaseType { get; set; }
     }
-
-
 }
