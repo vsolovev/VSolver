@@ -5,7 +5,7 @@ using System.Reflection;
 namespace VSolver.Interfaces
 {
 
-    public interface IContainer
+    public interface IContainer: IDisposable
     {
         bool IsChild { get; }
 
@@ -23,6 +23,7 @@ namespace VSolver.Interfaces
         void AddAssembly(Assembly assembly, AddAssemblyOption option);
 
         IContainer CreateChildContainer();
-        
+
+
     }
 }

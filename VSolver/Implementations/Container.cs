@@ -10,6 +10,7 @@ namespace VSolver.Implementations
     {
         public bool IsChild { get; }
 
+        private IContainer _parentContainer;
         private readonly Dictionary<Type, IMetaEntry> _registeredEntries;
         private readonly IInstanceFactory _factory;
         private readonly IDependencyCollector _collector;
@@ -25,14 +26,17 @@ namespace VSolver.Implementations
             _factory = factory;
             _collector = collector;
             _assemblyLoader = loader;
+            _parentContainer = null;
+            
         }
 
-        private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, Dictionary<Type, IMetaEntry> parentEntries)
+        private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, IContainer parent)
         {
             _factory = factory;
             _assemblyLoader = loader;
             _collector = collector;
-            _registeredEntries = parentEntries;
+            _registeredEntries = new Dictionary<Type, IMetaEntry>();
+            _parentContainer = parent;
             IsChild = true;
         }
 
@@ -88,6 +92,11 @@ namespace VSolver.Implementations
         {
             if (!_registeredEntries.ContainsKey(baseType))
             {
+                if (_parentContainer != null)
+                {
+                    return _parentContainer.Resolve(baseType);
+                }
+
                 throw new ApplicationException($"Type {baseType.FullName} was not registered!");
             }
 
@@ -140,7 +149,18 @@ namespace VSolver.Implementations
 
         public IContainer CreateChildContainer()
         {
-            return new Container(_factory, _collector, _assemblyLoader, _registeredEntries);
+            return new Container(_factory, _collector, _assemblyLoader, this);
+        }
+
+        public void Dispose()
+        {
+            foreach (var entry in _registeredEntries.Where(x=>x.Value.LifeCycle==LifeCycleOption.Singleton).Select(x=>x.Value.ConcreteInstance))
+            {
+                if (entry is IDisposable disposable)
+                {
+                    disposable.Dispose();
+                }
+            }
         }
     }
 }
