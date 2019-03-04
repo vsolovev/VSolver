@@ -4,7 +4,7 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{115EA004-C353-4CE4-98BF-F141CCB6F172}</ProjectGuid>
+    <ProjectGuid>{1FE9F535-FB34-4092-86E7-9FF5C787B7E7}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>VSolver</RootNamespace>
