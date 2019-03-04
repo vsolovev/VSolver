@@ -3,18 +3,24 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using VSolver.Interfaces;
+using System.Threading;
 
 namespace VSolver.Implementations
 {
     public class Container : IContainer
     {
         public bool IsChild { get; }
-
-        private IContainer _parentContainer;
         private readonly Dictionary<Type, IMetaEntry> _registeredEntries;
+        private readonly IContainer _parentContainer;
         private readonly IInstanceFactory _factory;
         private readonly IDependencyCollector _collector;
         private readonly IAssemblyLoader _assemblyLoader;
+
+        private bool _isDisposed;
+        private readonly object _locker = new object();
+        private readonly ReaderWriterLockSlim _containerLock = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
+
+    
         public Container():this(new InstanceFactory(), new DependencyCollector(), new AssemblyLoader())
         {
            
@@ -27,7 +33,7 @@ namespace VSolver.Implementations
             _collector = collector;
             _assemblyLoader = loader;
             _parentContainer = null;
-            
+            _isDisposed = false;
         }
 
         private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, IContainer parent)
@@ -37,6 +43,7 @@ namespace VSolver.Implementations
             _collector = collector;
             _registeredEntries = new Dictionary<Type, IMetaEntry>();
             _parentContainer = parent;
+            _isDisposed = false;
             IsChild = true;
         }
 
@@ -62,65 +69,113 @@ namespace VSolver.Implementations
 
         public void Register(Type implementationType, CreateInstanceFunction createFunction, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
         {
-            _registeredEntries.Add(baseType??implementationType, new MetaEntry()
+            _containerLock.EnterWriteLock();
+            try
             {
-                ConcreteInstance = null,
-                CreateInstanceFunction = createFunction,
-                ConstructorDependencies = _collector.CollectConstructorDependencies(implementationType),
-                PropertiesDependencies = _collector.CollectPropertiesDependencies(implementationType),
-                ImplementationType = implementationType,
-                InterfaceType = baseType??implementationType,
-                LifeCycle = option
-            });
+                _registeredEntries.Add(baseType ?? implementationType, new MetaEntry()
+                {
+                    ConcreteInstance = null,
+                    CreateInstanceFunction = createFunction,
+                    ConstructorDependencies = _collector.CollectConstructorDependencies(implementationType),
+                    PropertiesDependencies = _collector.CollectPropertiesDependencies(implementationType),
+                    ImplementationType = implementationType,
+                    InterfaceType = baseType ?? implementationType,
+                    LifeCycle = option
+                });
+            }
+            finally
+            {
+                _containerLock.ExitWriteLock();
+            }
+
         }
 
         public void Register(object instance, Type baseType, LifeCycleOption option = LifeCycleOption.Transient)
         {
-            _registeredEntries.Add(baseType, new MetaEntry()
+            _containerLock.EnterWriteLock();
+            try
             {
-                ConcreteInstance = instance,
-                ConstructorDependencies = null,
-                CreateInstanceFunction = null,
-                ImplementationType = null,
-                InterfaceType = baseType,
-                LifeCycle = option
+                _registeredEntries.Add(baseType, new MetaEntry()
+                {
+                    ConcreteInstance = instance,
+                    ConstructorDependencies = null,
+                    CreateInstanceFunction = null,
+                    ImplementationType = null,
+                    InterfaceType = baseType,
+                    LifeCycle = option
 
-            });
+                });
+            }
+            finally
+            {
+                _containerLock.ExitWriteLock();
+            }
+
         }
 
         public object Resolve(Type baseType)
         {
-            if (!_registeredEntries.ContainsKey(baseType))
+            
+            _containerLock.EnterReadLock();
+            IMetaEntry metaEntry;
+            try
             {
-                if (_parentContainer != null)
+                if (!_registeredEntries.ContainsKey(baseType))
                 {
-                    return _parentContainer.Resolve(baseType);
+                    if (_parentContainer != null)
+                    {
+
+                        return _parentContainer.Resolve(baseType);
+
+                    }
+
+                    throw new ApplicationException($"Type {baseType.FullName} was not registered!");
                 }
 
-                throw new ApplicationException($"Type {baseType.FullName} was not registered!");
+                metaEntry = _registeredEntries[baseType];
+                
+                var instance = GetPreviouslyResolvedInstance(metaEntry);
+                if (instance != null)
+                {
+                    return instance;
+                }
             }
-
-            var metaEntry = _registeredEntries[baseType];
-
-            if (metaEntry.ConcreteInstance != null)
+            finally
             {
-                return metaEntry.ConcreteInstance;
+                _containerLock.ExitReadLock();
             }
 
-            if (metaEntry.CreateInstanceFunction != null)
+            _containerLock.EnterWriteLock();
+            try
             {
-                return metaEntry.CreateInstanceFunction.Invoke();
+                var instance = GetPreviouslyResolvedInstance(metaEntry);
+                return instance ?? ActivateInstance(metaEntry);
             }
-            
+            finally
+            {
+                _containerLock.ExitWriteLock();
+            }
+        }
+
+        private object GetPreviouslyResolvedInstance(IMetaEntry metaEntry)
+        {
+            return metaEntry.ConcreteInstance ?? metaEntry.CreateInstanceFunction?.Invoke();
+        }
+
+        private object ActivateInstance(IMetaEntry metaEntry)
+        {
             var constructorDependenciesInstances = metaEntry.ConstructorDependencies.Select(Resolve).ToArray();
-            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(propertyInfo => propertyInfo, propertyInfo => Resolve(propertyInfo.PropertyType));
-            var instance =  _factory.CreateInstance(metaEntry.ImplementationType, constructorDependenciesInstances,
+            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(propertyInfo => propertyInfo, 
+                propertyInfo => Resolve(propertyInfo.PropertyType));
+
+            var instance = _factory.CreateInstance(metaEntry.ImplementationType, constructorDependenciesInstances,
                 propertiesDependenciesInstances);
 
             if (metaEntry.LifeCycle == LifeCycleOption.Singleton)
             {
                 metaEntry.ConcreteInstance = instance;
             }
+
             return instance;
         }
 
@@ -149,17 +204,31 @@ namespace VSolver.Implementations
 
         public IContainer CreateChildContainer()
         {
-            return new Container(_factory, _collector, _assemblyLoader, this);
+            Monitor.Enter(_locker);
+            var child = new Container(_factory, _collector, _assemblyLoader, this);
+            Monitor.Exit(_locker);
+            return child;
         }
 
         public void Dispose()
         {
-            foreach (var entry in _registeredEntries.Where(x=>x.Value.LifeCycle==LifeCycleOption.Singleton).Select(x=>x.Value.ConcreteInstance))
+            lock (_locker)
             {
-                if (entry is IDisposable disposable)
+                if (_isDisposed)
                 {
-                    disposable.Dispose();
+                    throw new ObjectDisposedException(nameof(Container));
                 }
+
+                foreach (var entry in _registeredEntries.Where(x => x.Value.LifeCycle == LifeCycleOption.Singleton).Select(x => x.Value.ConcreteInstance))
+                {
+                    if (entry is IDisposable disposable)
+                    {
+                        disposable.Dispose();
+                    }
+                }
+                _registeredEntries.Clear();
+                _isDisposed = true;
+
             }
         }
     }
