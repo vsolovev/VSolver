@@ -41,6 +41,24 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Attributes.cs" />
+    <Compile Include="Default\CustomerBLL.cs" />
+    <Compile Include="Default\CustomerDAL.cs" />
+    <Compile Include="Default\CustomerNoAttributes.cs" />
+    <Compile Include="Default\ICustomerDAL.cs" />
+    <Compile Include="Default\Logger.cs" />
+    <Compile Include="Default\PropCustomerBLL.cs" />
+    <Compile Include="Helpers.cs" />
+    <Compile Include="Implementations\AssemblyLoader.cs" />
+    <Compile Include="Implementations\Container.cs" />
+    <Compile Include="Implementations\DependencyCollector.cs" />
+    <Compile Include="Implementations\InstanceFactory.cs" />
+    <Compile Include="Implementations\MetaEntry.cs" />
+    <Compile Include="Interfaces\IAssemblyLoader.cs" />
+    <Compile Include="Interfaces\IContainer.cs" />
+    <Compile Include="Interfaces\IDependencyCollector.cs" />
+    <Compile Include="Interfaces\IInstanceFactory.cs" />
+    <Compile Include="Interfaces\IMetaEntry.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
