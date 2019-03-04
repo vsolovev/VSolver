@@ -7,8 +7,6 @@ namespace VSolver.Interfaces
 
     public interface IContainer: IDisposable
     {
-        bool IsChild { get; }
-
         void Register<TImpl>(Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient);
         void Register(Type implementationType, Type baseType=null, LifeCycleOption option = LifeCycleOption.Transient);
         void Register<TImpl, TBase>(LifeCycleOption option = LifeCycleOption.Transient);
@@ -23,7 +21,5 @@ namespace VSolver.Interfaces
         void AddAssembly(Assembly assembly, AddAssemblyOption option);
 
         IContainer CreateChildContainer();
-
-
     }
 }

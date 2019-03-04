@@ -9,7 +9,6 @@ namespace VSolver.Implementations
 {
     public class Container : IContainer
     {
-        public bool IsChild { get; }
         private readonly Dictionary<Type, IMetaEntry> _registeredEntries;
         private readonly IContainer _parentContainer;
         private readonly IInstanceFactory _factory;
@@ -17,23 +16,19 @@ namespace VSolver.Implementations
         private readonly IAssemblyLoader _assemblyLoader;
 
         private bool _isDisposed;
-        private readonly object _locker = new object();
-        private readonly ReaderWriterLockSlim _containerLock = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
+        private readonly ReaderWriterLockSlim _registeredEntriesLock = new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion);
 
     
-        public Container():this(new InstanceFactory(), new DependencyCollector(), new AssemblyLoader())
+        public Container():
+            this(new InstanceFactory(), new DependencyCollector(), new AssemblyLoader())
         {
            
         }
 
         public Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader)
+            :this(factory, collector, loader, null)
         {
-            _registeredEntries = new Dictionary<Type, IMetaEntry>();
-            _factory = factory;
-            _collector = collector;
-            _assemblyLoader = loader;
-            _parentContainer = null;
-            _isDisposed = false;
+
         }
 
         private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, IContainer parent)
@@ -44,7 +39,6 @@ namespace VSolver.Implementations
             _registeredEntries = new Dictionary<Type, IMetaEntry>();
             _parentContainer = parent;
             _isDisposed = false;
-            IsChild = true;
         }
 
         public void Register<TImpl>(Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
@@ -69,7 +63,7 @@ namespace VSolver.Implementations
 
         public void Register(Type implementationType, CreateInstanceFunction createFunction, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
         {
-            _containerLock.EnterWriteLock();
+            _registeredEntriesLock.EnterWriteLock();
             try
             {
                 _registeredEntries.Add(baseType ?? implementationType, new MetaEntry()
@@ -85,14 +79,14 @@ namespace VSolver.Implementations
             }
             finally
             {
-                _containerLock.ExitWriteLock();
+                _registeredEntriesLock.ExitWriteLock();
             }
 
         }
 
         public void Register(object instance, Type baseType, LifeCycleOption option = LifeCycleOption.Transient)
         {
-            _containerLock.EnterWriteLock();
+            _registeredEntriesLock.EnterWriteLock();
             try
             {
                 _registeredEntries.Add(baseType, new MetaEntry()
@@ -108,52 +102,33 @@ namespace VSolver.Implementations
             }
             finally
             {
-                _containerLock.ExitWriteLock();
+                _registeredEntriesLock.ExitWriteLock();
             }
 
         }
 
         public object Resolve(Type baseType)
         {
-            
-            _containerLock.EnterReadLock();
-            IMetaEntry metaEntry;
+            _registeredEntriesLock.EnterReadLock();
             try
             {
                 if (!_registeredEntries.ContainsKey(baseType))
                 {
                     if (_parentContainer != null)
                     {
-
                         return _parentContainer.Resolve(baseType);
-
                     }
 
                     throw new ApplicationException($"Type {baseType.FullName} was not registered!");
                 }
 
-                metaEntry = _registeredEntries[baseType];
-                
-                var instance = GetPreviouslyResolvedInstance(metaEntry);
-                if (instance != null)
-                {
-                    return instance;
-                }
+                var metaEntry = _registeredEntries[baseType];
+                return GetPreviouslyResolvedInstance(metaEntry) 
+                    ?? ActivateInstance(metaEntry);
             }
             finally
             {
-                _containerLock.ExitReadLock();
-            }
-
-            _containerLock.EnterWriteLock();
-            try
-            {
-                var instance = GetPreviouslyResolvedInstance(metaEntry);
-                return instance ?? ActivateInstance(metaEntry);
-            }
-            finally
-            {
-                _containerLock.ExitWriteLock();
+                _registeredEntriesLock.ExitReadLock();
             }
         }
 
@@ -162,57 +137,75 @@ namespace VSolver.Implementations
             return metaEntry.ConcreteInstance ?? metaEntry.CreateInstanceFunction?.Invoke();
         }
 
-        private object ActivateInstance(IMetaEntry metaEntry)
+        private object ActivateSingletonInstance(IMetaEntry metaEntry)
+        {
+            lock(metaEntry)
+            {
+                if (metaEntry.ConcreteInstance != null)
+                {
+                    return metaEntry.ConcreteInstance;
+                }
+
+                return metaEntry.ConcreteInstance = ActivateTransientInstance(metaEntry);
+            }
+        }
+
+        private object ActivateTransientInstance(IMetaEntry metaEntry)
         {
             var constructorDependenciesInstances = metaEntry.ConstructorDependencies.Select(Resolve).ToArray();
-            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(propertyInfo => propertyInfo, 
+            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(propertyInfo => propertyInfo,
                 propertyInfo => Resolve(propertyInfo.PropertyType));
 
-            var instance = _factory.CreateInstance(metaEntry.ImplementationType, constructorDependenciesInstances,
+            return _factory.CreateInstance(metaEntry.ImplementationType, constructorDependenciesInstances,
                 propertiesDependenciesInstances);
 
-            if (metaEntry.LifeCycle == LifeCycleOption.Singleton)
-            {
-                metaEntry.ConcreteInstance = instance;
-            }
+        }
 
-            return instance;
+        private object ActivateInstance(IMetaEntry metaEntry)
+        {
+            return metaEntry.LifeCycle == LifeCycleOption.Singleton 
+                ? ActivateSingletonInstance(metaEntry) 
+                : ActivateTransientInstance(metaEntry);
         }
 
         public TBase Resolve<TBase>() where TBase:class
         {
             return Resolve(typeof(TBase)) as TBase;
         }
-
-        
         
         public void AddAssembly(Assembly assembly, AddAssemblyOption option = AddAssemblyOption.DoNotOverrideEntries)
         {
             var assemblyEntries = _assemblyLoader.LoadAssembly(_collector, assembly);
-            foreach (var entry in assemblyEntries)
+            _registeredEntriesLock.EnterWriteLock();
+            try
             {
-                if (_registeredEntries.ContainsKey(entry.Key))
+                foreach (var entry in assemblyEntries)
                 {
-                    if (option == AddAssemblyOption.OverrideEntries)
+                    if (_registeredEntries.ContainsKey(entry.Key))
                     {
-                        _registeredEntries[entry.Key] = entry.Value;
+                        if (option == AddAssemblyOption.OverrideEntries)
+                        {
+                            _registeredEntries[entry.Key] = entry.Value;
+                        }
                     }
+                    _registeredEntries.Add(entry.Key, entry.Value);
                 }
-                _registeredEntries.Add(entry.Key, entry.Value);
+            }
+            finally
+            {
+                _registeredEntriesLock.ExitWriteLock();
             }
         }
 
         public IContainer CreateChildContainer()
         {
-            Monitor.Enter(_locker);
-            var child = new Container(_factory, _collector, _assemblyLoader, this);
-            Monitor.Exit(_locker);
-            return child;
+            return new Container(_factory, _collector, _assemblyLoader, this);
         }
 
         public void Dispose()
         {
-            lock (_locker)
+            _registeredEntriesLock.EnterWriteLock();
+            try
             {
                 if (_isDisposed)
                 {
@@ -227,8 +220,12 @@ namespace VSolver.Implementations
                     }
                 }
                 _registeredEntries.Clear();
+                _registeredEntriesLock.Dispose();
                 _isDisposed = true;
-
+            }
+            finally
+            {
+                _registeredEntriesLock.ExitWriteLock();
             }
         }
     }
