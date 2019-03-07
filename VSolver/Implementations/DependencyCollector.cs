@@ -20,7 +20,7 @@ namespace VSolver.Implementations
 
         public PropertyInfo[] CollectPropertiesDependencies(Type implementationType)
         {
-            return implementationType.GetProperties().Where(x=>x.HasAttribute<Import>()).ToArray();
+            return implementationType.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(x => !(x.PropertyType.IsValueType || x.PropertyType.IsPrimitive)).ToArray();
         }
     }
 }

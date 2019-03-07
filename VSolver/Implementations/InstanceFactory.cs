@@ -2,22 +2,44 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using VSolver.Interfaces;
 
 namespace VSolver.Implementations
 {
+    public interface IInstanceActivator
+    {
+        object CreateInstance(Type type, object[] args);
+    }
+
+    public class InstanceActivator : IInstanceActivator
+    {
+        public object CreateInstance(Type type, object[] args)
+        {
+            return Activator.CreateInstance(type, args, new object[0]);
+        }
+    }
+
     public class InstanceFactory : IInstanceFactory
     {
-        public object CreateInstance(Type type, object[] constructorDependencies, Dictionary<PropertyInfo, object> propertiesDependencies) 
+        private readonly IInstanceActivator _activator;
+
+        public InstanceFactory(): this(new InstanceActivator())
+        {
+            
+        }
+
+        public InstanceFactory(IInstanceActivator activator)
+        {
+            _activator = activator;
+        }
+
+        public object CreateInstance(Type type, object[] constructorDependencies, IDictionary<PropertyInfo, object> propertiesDependencies) 
         {
             var instance = CreateBaseInstance(type, constructorDependencies);
-            foreach (var property in type.GetProperties())
+            foreach (var property in propertiesDependencies)
             {
-                if (!propertiesDependencies.ContainsKey(property))
-                {
-                    throw new ApplicationException($"No registered type exists for property type {property.PropertyType}");
-                }
-                property.SetValue(instance, propertiesDependencies[property]);
+                property.Key.SetValue(instance, property.Value);
             }
             return instance;
 
@@ -30,7 +52,7 @@ namespace VSolver.Implementations
             {
                 throw new ApplicationException($"Type {type.FullName} has more than 1 constructor. ImportConstructor attribute cant be applied.");
             }
-            return Activator.CreateInstance(type, dependencies, new object[0]);
+            return _activator.CreateInstance(type, dependencies);
         }
 
     }

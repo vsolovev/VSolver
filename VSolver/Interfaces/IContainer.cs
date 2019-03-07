@@ -7,13 +7,13 @@ namespace VSolver.Interfaces
 
     public interface IContainer: IDisposable
     {
-        void Register<TImpl>(Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient);
-        void Register(Type implementationType, Type baseType=null, LifeCycleOption option = LifeCycleOption.Transient);
-        void Register<TImpl, TBase>(LifeCycleOption option = LifeCycleOption.Transient);
-        void Register<TImpl>(CreateInstanceFunction createFunction, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient);
-        void Register(Type implementationType, CreateInstanceFunction createFunction, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient);
-        void Register(object instance, Type baseType, LifeCycleOption option = LifeCycleOption.Transient);
 
+        void Register<T>(T instance);
+        void RegisterAsSingleton<T>(T instance);
+        void Register<T>(CreateInstanceFunction activationFunction = null);
+        void RegisterAsSingleton<T>(CreateInstanceFunction activationFunction = null);
+        void Register<TInterface, TImplementation>();
+        void RegisterAsSingleton<TInterface, TImplementation>();
 
 
         object Resolve(Type baseType);

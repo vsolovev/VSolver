@@ -2,14 +2,16 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using VSolver.Interfaces;
 using System.Threading;
 
 namespace VSolver.Implementations
 {
+    
     public class Container : IContainer
     {
-        private readonly Dictionary<Type, IMetaEntry> _registeredEntries;
+        private readonly IDictionary<Type, IMetaEntry> _registeredEntries;
         private readonly IContainer _parentContainer;
         private readonly IInstanceFactory _factory;
         private readonly IDependencyCollector _collector;
@@ -20,93 +22,89 @@ namespace VSolver.Implementations
 
     
         public Container():
-            this(new InstanceFactory(), new DependencyCollector(), new AssemblyLoader())
+            this(new InstanceFactory(), new DependencyCollector(), new AssemblyLoader(), new Dictionary<Type, IMetaEntry>())
         {
            
         }
 
-        public Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader)
-            :this(factory, collector, loader, null)
+        public Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, IDictionary<Type, IMetaEntry> registry)
+            :this(factory, collector, loader, null, registry)
         {
 
         }
 
-        private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, IContainer parent)
+        private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader,  IContainer parent)
+            : this(factory, collector, loader, parent, new Dictionary<Type, IMetaEntry>())
+        {
+            
+        }
+
+        private Container(IInstanceFactory factory, IDependencyCollector collector, IAssemblyLoader loader, IContainer parent, IDictionary<Type, IMetaEntry> registry)
         {
             _factory = factory;
             _assemblyLoader = loader;
             _collector = collector;
-            _registeredEntries = new Dictionary<Type, IMetaEntry>();
+            _registeredEntries = registry ?? new Dictionary<Type, IMetaEntry>();
             _parentContainer = parent;
             _isDisposed = false;
         }
 
-        public void Register<TImpl>(Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
+
+        public void Register<T>(T instance)
         {
-            Register(typeof(TImpl), null, baseType, option);
+            Register(typeof(T), typeof(T), null, instance, LifeCycleOption.Transient);
         }
 
-        public void Register(Type implementationType, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
+        public void RegisterAsSingleton<T>(T instance)
         {
-            Register(implementationType, null, baseType, option);
+            Register(typeof(T), typeof(T), null, instance, LifeCycleOption.Singleton);
         }
 
-        public void Register<TImpl, TBase>(LifeCycleOption option = LifeCycleOption.Transient)
+        public void Register<T>(CreateInstanceFunction activationFunction = null)
         {
-            Register(typeof(TImpl), null, typeof(TBase), option);
+            Register(typeof(T), typeof(T), activationFunction, null, LifeCycleOption.Transient);
         }
 
-        public void Register<TImpl>(CreateInstanceFunction createFunction, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
+        public void RegisterAsSingleton<T>(CreateInstanceFunction activationFunction = null)
         {
-            Register(typeof(TImpl), createFunction, baseType, option);
+            Register(typeof(T), typeof(T), activationFunction, null, LifeCycleOption.Singleton);
         }
 
-        public void Register(Type implementationType, CreateInstanceFunction createFunction, Type baseType = null, LifeCycleOption option = LifeCycleOption.Transient)
+        public void Register<TInterface, TImplementation>()
+        {
+            Register(typeof(TInterface), typeof(TImplementation), null, null, LifeCycleOption.Transient);
+        }
+
+        public void RegisterAsSingleton<TInterface, TImplementation>()
+        {
+            Register(typeof(TInterface), typeof(TImplementation), null, null, LifeCycleOption.Singleton);
+        }
+
+        private void Register(Type interfaceType, Type implementationType, CreateInstanceFunction activationFunction,
+            object instance, LifeCycleOption option)
         {
             _registeredEntriesLock.EnterWriteLock();
             try
             {
-                _registeredEntries.Add(baseType ?? implementationType, new MetaEntry()
-                {
-                    ConcreteInstance = null,
-                    CreateInstanceFunction = createFunction,
-                    ConstructorDependencies = _collector.CollectConstructorDependencies(implementationType),
-                    PropertiesDependencies = _collector.CollectPropertiesDependencies(implementationType),
-                    ImplementationType = implementationType,
-                    InterfaceType = baseType ?? implementationType,
-                    LifeCycle = option
-                });
-            }
-            finally
-            {
-                _registeredEntriesLock.ExitWriteLock();
-            }
-
-        }
-
-        public void Register(object instance, Type baseType, LifeCycleOption option = LifeCycleOption.Transient)
-        {
-            _registeredEntriesLock.EnterWriteLock();
-            try
-            {
-                _registeredEntries.Add(baseType, new MetaEntry()
+                var ready = instance != null || activationFunction != null;
+                _registeredEntries.Add(interfaceType, new MetaEntry()
                 {
                     ConcreteInstance = instance,
-                    ConstructorDependencies = null,
-                    CreateInstanceFunction = null,
-                    ImplementationType = null,
-                    InterfaceType = baseType,
+                    CreateInstanceFunction = activationFunction,
+                    ConstructorDependencies = ready ? null : _collector.CollectConstructorDependencies(implementationType),
+                    PropertiesDependencies = ready ? null : _collector.CollectPropertiesDependencies(implementationType),
+                    ImplementationType = implementationType,
+                    InterfaceType = interfaceType,
                     LifeCycle = option
-
                 });
+
             }
             finally
             {
                 _registeredEntriesLock.ExitWriteLock();
             }
-
         }
-
+        
         public object Resolve(Type baseType)
         {
             _registeredEntriesLock.EnterReadLock();
@@ -153,9 +151,8 @@ namespace VSolver.Implementations
         private object ActivateTransientInstance(IMetaEntry metaEntry)
         {
             var constructorDependenciesInstances = metaEntry.ConstructorDependencies.Select(Resolve).ToArray();
-            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(propertyInfo => propertyInfo,
-                propertyInfo => Resolve(propertyInfo.PropertyType));
-
+            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(property => property, property => Resolve(property.PropertyType));
+            
             return _factory.CreateInstance(metaEntry.ImplementationType, constructorDependenciesInstances,
                 propertiesDependenciesInstances);
 
@@ -204,6 +201,11 @@ namespace VSolver.Implementations
 
         public void Dispose()
         {
+            if (_isDisposed)
+            {
+                throw new ObjectDisposedException(nameof(Container));
+            }
+
             _registeredEntriesLock.EnterWriteLock();
             try
             {
@@ -220,12 +222,14 @@ namespace VSolver.Implementations
                     }
                 }
                 _registeredEntries.Clear();
-                _registeredEntriesLock.Dispose();
-                _isDisposed = true;
+                
+                
             }
             finally
             {
+                _isDisposed = true;
                 _registeredEntriesLock.ExitWriteLock();
+                _registeredEntriesLock.Dispose();
             }
         }
     }
