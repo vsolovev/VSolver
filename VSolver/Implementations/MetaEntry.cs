@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq.Expressions;
 using System.Reflection;
 using VSolver.Interfaces;
 
@@ -14,7 +15,8 @@ namespace VSolver.Implementations
         public Type ImplementationType { get; set; }
         public object ConcreteInstance { get; set; }
         public LifeCycleOption LifeCycle { get; set; }
-
+        public Expression CachedExpression { get; set; }
+        
         public MetaEntry()
         {
             LifeCycle = LifeCycleOption.Transient;

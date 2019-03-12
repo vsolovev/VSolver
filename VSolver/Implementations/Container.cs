@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using VSolver.Interfaces;
@@ -83,21 +84,27 @@ namespace VSolver.Implementations
         private void Register(Type interfaceType, Type implementationType, CreateInstanceFunction activationFunction,
             object instance, LifeCycleOption option)
         {
+
+            if (implementationType.GetConstructors(BindingFlags.Instance | BindingFlags.Public).Length != 1)
+            {
+                throw new ApplicationException($"Type {implementationType.FullName} doen't have single public constructor. ImportConstructor attribute cant be applied.");
+            }
+
             _registeredEntriesLock.EnterWriteLock();
             try
             {
-                var ready = instance != null || activationFunction != null;
+                var activatorNeeded = instance == null && activationFunction == null;
                 _registeredEntries.Add(interfaceType, new MetaEntry()
                 {
                     ConcreteInstance = instance,
                     CreateInstanceFunction = activationFunction,
-                    ConstructorDependencies = ready ? null : _collector.CollectConstructorDependencies(implementationType),
-                    PropertiesDependencies = ready ? null : _collector.CollectPropertiesDependencies(implementationType),
+                    ConstructorDependencies = activatorNeeded ? _collector.CollectConstructorDependencies(implementationType) : null,
+                    PropertiesDependencies = activatorNeeded ? _collector.CollectPropertiesDependencies(implementationType) : null,
                     ImplementationType = implementationType,
                     InterfaceType = interfaceType,
-                    LifeCycle = option
+                    LifeCycle = option,
+                    CachedExpression = null
                 });
-
             }
             finally
             {
@@ -110,24 +117,28 @@ namespace VSolver.Implementations
             _registeredEntriesLock.EnterReadLock();
             try
             {
-                if (!_registeredEntries.ContainsKey(baseType))
-                {
-                    if (_parentContainer != null)
-                    {
-                        return _parentContainer.Resolve(baseType);
-                    }
-
-                    throw new ApplicationException($"Type {baseType.FullName} was not registered!");
-                }
-
-                var metaEntry = _registeredEntries[baseType];
-                return GetPreviouslyResolvedInstance(metaEntry) 
-                    ?? ActivateInstance(metaEntry);
+                return InternalResolve(baseType);
             }
             finally
             {
                 _registeredEntriesLock.ExitReadLock();
             }
+        }
+
+        private object InternalResolve(Type baseType)
+        {
+            if (!_registeredEntries.TryGetValue(baseType, out var metaEntry))
+            {
+                if (_parentContainer != null)
+                {
+                    return _parentContainer.Resolve(baseType);
+                }
+
+                throw new ApplicationException($"Type {baseType.FullName} was not registered!");
+            }
+
+            return GetPreviouslyResolvedInstance(metaEntry)
+                   ?? ActivateInstance(metaEntry);
         }
 
         private object GetPreviouslyResolvedInstance(IMetaEntry metaEntry)
@@ -148,14 +159,64 @@ namespace VSolver.Implementations
             }
         }
 
+
+        // [metaEntry.ImplementationType] = class MyImplementation(param1, param2, param3)
+        private Expression CreateExpression(IMetaEntry metaEntry)
+        {
+            var expression = Expression.New(metaEntry.ImplementationType);
+            var cDepList = new List<Expression>();
+
+            foreach (var item in metaEntry.ConstructorDependencies)
+            {
+                if (!_registeredEntries.TryGetValue(item, out var dependencyMetaEntry))
+                {
+                    throw new ApplicationException($"Type {item.FullName} was not registered!");
+                }
+                cDepList.Add(dependencyMetaEntry.CachedExpression ?? CreateExpression(dependencyMetaEntry));
+            }
+
+            var constructorCallExp = Expression.New(metaEntry.ImplementationType.GetConstructors().Single(), cDepList.ToArray());
+
+            var pDepList = new List<MemberBinding>();
+            foreach (var item in metaEntry.PropertiesDependencies)
+            {
+                if (!_registeredEntries.TryGetValue(item.PropertyType, out var dependencyMetaEntry))
+                {
+                    throw new ApplicationException($"Type {item.PropertyType.FullName} was not registered!");
+                }
+                
+                pDepList.Add(Expression.Bind(item, dependencyMetaEntry.CachedExpression ?? CreateExpression(dependencyMetaEntry)));
+            }
+
+            var propExpression = Expression.MemberInit(constructorCallExp, pDepList.ToArray());
+
+            return propExpression;
+        }
+
+
         private object ActivateTransientInstance(IMetaEntry metaEntry)
         {
-            var constructorDependenciesInstances = metaEntry.ConstructorDependencies.Select(Resolve).ToArray();
-            var propertiesDependenciesInstances = metaEntry.PropertiesDependencies.ToDictionary(property => property, property => Resolve(property.PropertyType));
+
+            //var expression = metaEntry.CachedExpression ?? CreateExpression(metaEntry);
             
+
+
+            var constructorDependenciesInstances = new object[metaEntry.ConstructorDependencies.Length];
+            for (var i = 0; i < constructorDependenciesInstances.Length; i++)
+            {
+                constructorDependenciesInstances[i] = InternalResolve(metaEntry.ConstructorDependencies[i]);
+            }
+
+            var propertiesDependenciesInstances = new KeyValuePair<PropertyInfo, object>[metaEntry.PropertiesDependencies.Length];
+            for (var i = 0; i < propertiesDependenciesInstances.Length; i++)
+            {
+                var dependency = metaEntry.PropertiesDependencies[i];
+                var propertyValueInstance = InternalResolve(dependency.PropertyType);
+                propertiesDependenciesInstances[i] = new KeyValuePair<PropertyInfo, object>(dependency, propertyValueInstance);
+            }
+
             return _factory.CreateInstance(metaEntry.ImplementationType, constructorDependenciesInstances,
                 propertiesDependenciesInstances);
-
         }
 
         private object ActivateInstance(IMetaEntry metaEntry)

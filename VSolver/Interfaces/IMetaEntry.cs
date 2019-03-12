@@ -1,6 +1,6 @@
 ﻿using System;
+using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.InteropServices;
 
 namespace VSolver.Interfaces
 {
@@ -19,5 +19,6 @@ namespace VSolver.Interfaces
         Type ImplementationType { get; set; }
         object ConcreteInstance { get; set; }
         LifeCycleOption LifeCycle { get; set; }
+        Expression CachedExpression { get; set; } 
     }
 }

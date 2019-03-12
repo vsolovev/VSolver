@@ -34,7 +34,7 @@ namespace VSolver.Implementations
             _activator = activator;
         }
 
-        public object CreateInstance(Type type, object[] constructorDependencies, IDictionary<PropertyInfo, object> propertiesDependencies) 
+        public object CreateInstance(Type type, object[] constructorDependencies, IEnumerable<KeyValuePair<PropertyInfo, object>> propertiesDependencies) 
         {
             var instance = CreateBaseInstance(type, constructorDependencies);
             foreach (var property in propertiesDependencies)
@@ -42,16 +42,10 @@ namespace VSolver.Implementations
                 property.Key.SetValue(instance, property.Value);
             }
             return instance;
-
         }
-
+        
         private object CreateBaseInstance(Type type, object[] dependencies)
         {
-            var constructors = type.GetConstructors();
-            if (constructors.Length != 1)
-            {
-                throw new ApplicationException($"Type {type.FullName} has more than 1 constructor. ImportConstructor attribute cant be applied.");
-            }
             return _activator.CreateInstance(type, dependencies);
         }
 

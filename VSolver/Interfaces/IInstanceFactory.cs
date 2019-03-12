@@ -7,6 +7,7 @@ namespace VSolver.Interfaces
 {
     public interface IInstanceFactory
     {
-        object CreateInstance(Type type, object[] constructorDependencies, IDictionary<PropertyInfo, object> propertiesDependencies);
+        object CreateInstance(Type type, object[] constructorDependencies, IEnumerable<KeyValuePair<PropertyInfo, object>> propertiesDependencies);
+        
     }
 }
