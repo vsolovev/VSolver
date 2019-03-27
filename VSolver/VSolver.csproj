@@ -46,12 +46,12 @@
     <Compile Include="Implementations\AssemblyLoader.cs" />
     <Compile Include="Implementations\Container.cs" />
     <Compile Include="Implementations\DependencyCollector.cs" />
-    <Compile Include="Implementations\InstanceFactory.cs" />
+    <Compile Include="Implementations\Compiler.cs" />
     <Compile Include="Implementations\MetaEntry.cs" />
     <Compile Include="Interfaces\IAssemblyLoader.cs" />
     <Compile Include="Interfaces\IContainer.cs" />
     <Compile Include="Interfaces\IDependencyCollector.cs" />
-    <Compile Include="Interfaces\IInstanceFactory.cs" />
+    <Compile Include="Interfaces\ICompiler.cs" />
     <Compile Include="Interfaces\IMetaEntry.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

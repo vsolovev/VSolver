@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Linq.Expressions;
 using System.Reflection;
 using VSolver.Interfaces;
 
@@ -7,15 +6,15 @@ namespace VSolver.Implementations
 {
     public class MetaEntry : IMetaEntry
     {
+        public delegate Func<object> CompiledExpressionDelegate();
+
         public Type InterfaceType { get; set; }
         public CreateInstanceFunction CreateInstanceFunction { get; set; }
         public Type[] ConstructorDependencies { get; set; }
         public PropertyInfo[] PropertiesDependencies { get; set; }
-       
         public Type ImplementationType { get; set; }
         public object ConcreteInstance { get; set; }
         public LifeCycleOption LifeCycle { get; set; }
-        public Expression CachedExpression { get; set; }
         
         public MetaEntry()
         {
